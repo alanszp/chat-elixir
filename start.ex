@@ -38,9 +38,11 @@ defmodule IRC do
                 loop [ pid | subscribed ], silenced
 
             {pid, :silence, receptor} ->
-                if Map.get(silenced, pid),
-                    do: loop(subscribed, Map.update!(silenced, pid, fn list -> [ receptor | list ] end)),
-                    else: loop(subscribed, Map.put(silenced, pid, [receptor]))
+                if Map.get(silenced, pid) do
+                    loop(subscribed, Map.update!(silenced, pid, fn list -> [ receptor | list ] end))
+                else
+                    loop(subscribed, Map.put(silenced, pid, [receptor]))
+                end
 
             {pid, :start_writting} ->
                 IO.puts "El emisor #{inspect pid} ha empezado a escribir"
@@ -58,10 +60,12 @@ defmodule IRC do
                 loop subscribed, silenced
 
             {pid, :recieved, emisor, message} ->
-                send(emisor, {pid, :recieved, message})
-                if (pid in Map.get(silenced, emisor)),
-                    do: IO.puts "Silenced receptor: #{inspect pid} for emisor #{inspect emisor}",
-                    else: IO.puts "hasdasd"
+                receptors = Map.get(silenced, emisor) || []
+                
+                if !(pid in receptors) do
+                    send(emisor, {pid, :recieved, message})
+                end
+
                 loop subscribed, silenced
 
             {pid, _ } ->
@@ -94,7 +98,6 @@ defmodule Receptor do
   end
 
 end
-
 irc = IRC.start
 Process.register irc, :irc
 IO.puts "IRC: #{inspect irc}"
@@ -114,13 +117,26 @@ IO.puts "Receptor 1: #{inspect receptor1}"
 IO.puts "Receptor 2: #{inspect receptor2}"
 IO.puts "Receptor 3: #{inspect receptor3}"
 
+:timer.sleep(100)
+
 send :irc, {:receptor1, :subscribe}
 send :irc, {:receptor2, :subscribe}
 send :irc, {:receptor3, :subscribe}
 
-send :irc, {:emisor, :start_writting}
-send :irc, {:emisor, :send, "Hola"}
+:timer.sleep(100)
 
-send :irc, {:emisor, :silence, :receptor2}
+send :irc, {:emisor, :start_writting}
+:timer.sleep(500)
+
+send :irc, {:emisor, :send, "Hola"}
+:timer.sleep(500)
+
+
+send :irc, {:emisor, :silence, receptor2}
+send :irc, {:emisor, :silence, receptor3}
+
+:timer.sleep(500)
 
 send :irc, {:emisor, :send, "Chau"}
+
+:timer.sleep(500)
