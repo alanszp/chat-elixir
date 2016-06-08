@@ -28,20 +28,30 @@ end
 
 defmodule IRC do
     def start do
-        spawn_link(fn -> loop([], %{}) end)
+        spawn_link(fn -> loop([], %{}, %{}) end)
     end
 
-    def loop(subscribed, silenced) do
+    def loop(subscribed, silenced_sends, silenced_reads) do
         receive do
             {pid, :subscribe} ->
                 IO.puts "Se ha subscribido: #{inspect pid}"
-                loop [ pid | subscribed ], silenced
+                loop [ pid | subscribed ], silenced_sends, silenced_reads
 
-            {pid, :silence, receptor} ->
-                if Map.get(silenced, pid) do
-                    loop(subscribed, Map.update!(silenced, pid, fn list -> [ receptor | list ] end))
+            {pid, :silence_read, receptor} ->
+                IO.puts "El emisor #{inspect pid} no recibira las notificaciones de lectura de #{inspect receptor}"
+                if Map.get(silenced_reads, pid) do
+                    loop subscribed, silenced_sends, Map.update!(silenced_reads, pid, fn list -> [ receptor | list ] end)
                 else
-                    loop(subscribed, Map.put(silenced, pid, [receptor]))
+                    loop subscribed, silenced_sends, Map.put(silenced_reads, pid, [receptor])
+                end
+
+            {pid, :silence_send, emisor} ->
+                IO.puts "El receptor #{inspect pid} no recibira los mensajes de #{inspect emisor}"
+
+                if Map.get(silenced_sends, pid) do
+                    loop subscribed, Map.update!(silenced_sends, emisor, fn list -> [ pid | list ] end), silenced_reads
+                else
+                    loop subscribed, Map.put(silenced_sends, emisor, [pid]), silenced_reads
                 end
 
             {pid, :start_writting} ->
@@ -49,28 +59,30 @@ defmodule IRC do
                 for subscriber <- subscribed do
                     send subscriber, {pid, :start_writting}
                 end
-                loop subscribed, silenced
+                loop subscribed, silenced_sends, silenced_reads
 
 
             {pid, :send, message} ->
                 IO.puts "El emisor #{inspect pid} ha enviado #{message}"
-                for subscriber <- subscribed do
+                receptors = Map.get(silenced_sends, pid) || []
+                for subscriber <- subscribed, ! subscriber in receptors do
                     send subscriber, {pid, :message, message}
                 end
-                loop subscribed, silenced
+
+                loop subscribed, silenced_sends, silenced_reads
 
             {pid, :recieved, emisor, message} ->
-                receptors = Map.get(silenced, emisor) || []
+                receptors = Map.get(silenced_reads, emisor) || []
                 
-                if !(pid in receptors) do
+                unless pid in receptors do
                     send(emisor, {pid, :recieved, message})
                 end
 
-                loop subscribed, silenced
+                loop subscribed, silenced_sends, silenced_reads
 
             {pid, _ } ->
                 send pid, {:error, 'Accion Invalida de #{inspect pid}'}
-                loop subscribed, silenced
+                loop subscribed, silenced_sends, silenced_reads
         end
     end
 end
@@ -98,6 +110,7 @@ defmodule Receptor do
   end
 
 end
+
 irc = IRC.start
 Process.register irc, :irc
 IO.puts "IRC: #{inspect irc}"
@@ -118,12 +131,14 @@ IO.puts "Receptor 2: #{inspect receptor2}"
 IO.puts "Receptor 3: #{inspect receptor3}"
 
 :timer.sleep(100)
+IO.puts "\n---------------------------\n"
 
 send :irc, {:receptor1, :subscribe}
 send :irc, {:receptor2, :subscribe}
 send :irc, {:receptor3, :subscribe}
 
 :timer.sleep(100)
+IO.puts "\n---------------------------\n"
 
 send :irc, {:emisor, :start_writting}
 :timer.sleep(500)
@@ -131,12 +146,14 @@ send :irc, {:emisor, :start_writting}
 send :irc, {:emisor, :send, "Hola"}
 :timer.sleep(500)
 
+IO.puts "\n---------------------------\n"
 
-send :irc, {:emisor, :silence, receptor2}
-send :irc, {:emisor, :silence, receptor3}
+send :irc, {:receptor1, :silence_send, :emisor}
+send :irc, {:emisor, :silence_read, receptor3}
 
 :timer.sleep(500)
 
 send :irc, {:emisor, :send, "Chau"}
 
-:timer.sleep(500)
+:timer.sleep(100)
+IO.puts "\n---------------------------\n"
