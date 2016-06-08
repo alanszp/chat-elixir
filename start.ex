@@ -14,8 +14,11 @@ defmodule Emisor do
         {:send, message} ->
             send irc, {self, :send, message}
 
-        {pid, :recieved, message} ->
-            IO.puts 'Se ha recibido el mensaje "#{message}" de #{inspect pid}'
+        {pid, :recieved, m_id} ->
+            IO.puts 'Notificacion: Se ha recibido el mensaje #{m_id} de #{inspect pid}'
+
+        {pid, :read, m_id} ->
+            IO.puts 'Notificacion: El receptor #{inspect pid} ha leido el mensaje #{m_id}'
 
         {pid, _ } ->
             send :pid, {:error, 'Accion Invalida de #{inspect pid}'}
@@ -56,14 +59,15 @@ defmodule IRC do
 
             {pid, :start_writting} ->
                 IO.puts "El emisor #{inspect pid} ha empezado a escribir"
-                for subscriber <- subscribed do
+                receptors = Map.get(silenced_sends, pid) || []
+                for subscriber <- subscribed, ! subscriber in receptors do
                     send subscriber, {pid, :start_writting}
                 end
                 loop subscribed, silenced_sends, silenced_reads
 
 
             {pid, :send, message} ->
-                IO.puts "El emisor #{inspect pid} ha enviado #{message}"
+                IO.puts "El emisor #{inspect pid} ha enviado #{inspect message}"
                 receptors = Map.get(silenced_sends, pid) || []
                 for subscriber <- subscribed, ! subscriber in receptors do
                     send subscriber, {pid, :message, message}
@@ -76,6 +80,15 @@ defmodule IRC do
                 
                 unless pid in receptors do
                     send(emisor, {pid, :recieved, message})
+                end
+
+                loop subscribed, silenced_sends, silenced_reads
+
+            {pid, :read, emisor, message} ->
+                receptors = Map.get(silenced_reads, emisor) || []
+                
+                unless pid in receptors do
+                    send(emisor, {pid, :read, message})
                 end
 
                 loop subscribed, silenced_sends, silenced_reads
@@ -96,12 +109,16 @@ defmodule Receptor do
 
   def loop(irc) do
     receive do
+        {:read, emisor, m_id} ->
+            IO.puts 'Receptor #{inspect self} ha leido el mensaje #{m_id}'
+            send irc, {self, :read, emisor, m_id}
+
         {pid, :start_writting} ->
             IO.puts "Receptor #{inspect self} Ha empezado a escribir el mensaje el usuario: #{inspect pid}"
 
-        {pid, :message, message} ->
-            IO.puts 'Receptor #{inspect self} Emisor #{inspect pid}: #{message}'
-            send irc, {self, :recieved, pid, message}
+        {pid, :message, {m_id, message}} ->
+            IO.puts 'Receptor #{inspect self} Emisor #{inspect pid}: #{message} (#{m_id})'
+            send irc, {self, :recieved, pid, m_id}
 
         {pid, _ } ->
             send :pid, {:error, 'Accion Invalida de #{inspect pid}'}
@@ -126,6 +143,7 @@ Process.register receptor1, :receptor1
 Process.register receptor2, :receptor2
 Process.register receptor3, :receptor3
 
+IO.puts "Emisor: #{inspect emisor}"
 IO.puts "Receptor 1: #{inspect receptor1}"
 IO.puts "Receptor 2: #{inspect receptor2}"
 IO.puts "Receptor 3: #{inspect receptor3}"
@@ -133,27 +151,37 @@ IO.puts "Receptor 3: #{inspect receptor3}"
 :timer.sleep(100)
 IO.puts "\n---------------------------\n"
 
-send :irc, {:receptor1, :subscribe}
-send :irc, {:receptor2, :subscribe}
-send :irc, {:receptor3, :subscribe}
+send :irc, {receptor1, :subscribe}
+send :irc, {receptor2, :subscribe}
+send :irc, {receptor3, :subscribe}
 
 :timer.sleep(100)
 IO.puts "\n---------------------------\n"
 
-send :irc, {:emisor, :start_writting}
+send :emisor, {:start_writting}
 :timer.sleep(500)
 
-send :irc, {:emisor, :send, "Hola"}
+send :emisor, {:send, {1, "Hola"}}
 :timer.sleep(500)
 
 IO.puts "\n---------------------------\n"
 
-send :irc, {:receptor1, :silence_send, :emisor}
-send :irc, {:emisor, :silence_read, receptor3}
+send :irc, {receptor1, :silence_send, emisor}
+send :irc, {emisor, :silence_read, receptor3}
 
 :timer.sleep(500)
-
-send :irc, {:emisor, :send, "Chau"}
-
-:timer.sleep(100)
 IO.puts "\n---------------------------\n"
+
+send :emisor, {:start_writting}
+:timer.sleep(500)
+
+send :emisor, {:send, {2, "Chau"}}
+
+:timer.sleep(500)
+IO.puts "\n---------------------------\n"
+
+send :receptor1, {:read, emisor, 1}
+
+:timer.sleep(500)
+IO.puts "\n---------------------------\n"
+
